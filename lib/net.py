@@ -4,6 +4,13 @@ Network stuff
 
 import socket
 import threading
+import logging
+
+logging.basicConfig(filename='net.log',level=logging.DEBUG) # temporary DEBUG default
+logging.info('Tut.')
+logging.warning('Winter is coming!')
+logging.error('Oh boy!')
+logging.critical('It is the Night King - and he has a dragon!')
 
 
 _host_address = "localhost"
@@ -63,4 +70,10 @@ def listener():
 
 
 def init():
-    threading.Thread(target=listener).start()
+    threading.Thread(target=listener, name='thread-listener').start()
+    # Should we maybe start the proxy via a main non-daemon thread but run the vital functions via a daemon-thread? 
+    # To spare resources and not have a python script running 24/7. Not sure that makes sense though, tired and my eyes hurt. Gn8
+    # mpdprox_main = threading.Thread(target=listener, name='thread-listener')
+    # mpdprox_daemon = threading.Thread(target=vitalfunc_daemon, name=vitalfunc_daemon, daemon=True)
+    # mpdprox_main.start()
+    # mpdprox_daemon.start()
