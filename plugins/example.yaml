@@ -1,0 +1,23 @@
+---
+# proposed plugin metafile structure
+name: denon-avr  # can be any string
+exec-file: denon-avr.py  # filename of the python file; can be a path; caution: catch file traversal attacks
+prio: 0  # can be any signed integer; the lower the number, the higher the prio (just like nice does it)
+categories:  # space for custom categories to be used below
+    - name: arbitrarycustomcategory
+      verbs:
+          - playpause
+          - prioid
+          - volumeup
+protocol-parts:
+    # list of protocol parts this
+    - verb: next  # can be either verb or category; verb has to match a specific protocol part (like "play" or "prioid"
+                  # while category can be one of the to be specified groups; e.g. playback would be everything that
+                  # controls playback state (play, pause, stop, ...), volume would be any volume control etc.
+      type: consume  # can be listen or consume
+    - category: playpause
+      type: listen
+    - category: anotherplugin.customcategory123  # reference to a category that is specified in another plugin's meta
+      type: listen
+
+# TODO: include state changes that happen independently from client action, e.g. playing next song in queue

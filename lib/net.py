@@ -5,6 +5,7 @@ Network stuff
 import socket
 import threading
 import logging
+from lib.util import Source
 
 logging.basicConfig(filename='net.log',level=logging.DEBUG) # temporary DEBUG default
 logging.info('Tut.')
@@ -18,7 +19,7 @@ _host_port = 6600
 _listening_port = 6601
 
 
-class Client:
+class Connection:
     """
     We have one of these per client. This contains the client socket and the client-specific mpd socket.
     """
@@ -34,17 +35,36 @@ class Client:
 
     def send_mpd(self, s):
         """
-        :param s: Message that is to be sent to MPD
+        :param msg: Message object that is to be sent to MPD
         :return:
         """
         pass
 
-    def send_client(self, s):
+    def send_client(self, msg):
         """
-        :param s: Message that is to be sent to the client
+        :param msg: Message object that is to be sent to the client
         :return:
         """
         pass
+
+
+class Message:
+    def __init__(self, connection=None, source=None):
+        """
+        :param connection: Connection object that this message occured in; can be None if this is an original message
+        :param source: util.Source object; can be None if this is an original message
+        """
+        self.connection = connection
+        self.source = source
+        assert (connection is source is None) or (connection is not None and source is not None)
+
+
+def connhandler(proxy):
+    """
+    Reads messages and calls proxy
+    :param proxy: mpdproxy.Proxy object
+    :return:
+    """
 
 
 def listener():
@@ -66,10 +86,15 @@ def listener():
         conn, addr = s.accept()
         conn.setblocking(False)
         print("incoming connection from " + str(addr[0]))
-        Client(conn, _host_address, _host_port)  # TODO decide how this is registered in main thingy
+        Connection(conn, _host_address, _host_port)  # TODO decide how this is registered in main thingy
 
 
-def init():
+def init(proxy):
+    """
+    Does the I/O thread setup.
+    :param proxy: mpdclient.Proxy object
+    :return:
+    """
     threading.Thread(target=listener, name='thread-listener').start()
     # Should we maybe start the proxy via a main non-daemon thread but run the vital functions via a daemon-thread? 
     # To spare resources and not have a python script running 24/7. Not sure that makes sense though, tired and my eyes hurt. Gn8
