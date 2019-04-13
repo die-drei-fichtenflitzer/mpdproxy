@@ -8,14 +8,15 @@ import logging
 import selectors
 from lib.util import Source
 
-logging.basicConfig(filename='net.log',level=logging.DEBUG) # temporary DEBUG default
+# logging.basicConfig(filename='net.log', level=logging.DEBUG) # temporary DEBUG default
+logging.basicConfig(level=logging.DEBUG)
 logging.info('Tut.')
 logging.warning('Winter is coming!')
 logging.error('Oh boy!')
 logging.critical('It is the Night King - and he has a dragon!')
 
 
-_host_address = "localhost"
+_host_address = "192.168.0.2"
 _host_port = 6600
 _listening_port = 6601
 
@@ -33,7 +34,12 @@ class Proxy:
         :param msg: net.Message object
         :return: None
         """
-        raise NotImplementedError()
+        if msg.source == Source.mpd:
+            msg.connection.send(msg, Source.client)
+        elif msg.source == Source.client:
+            msg.connection.send(msg, Source.mpd)
+        else:
+            assert False
 
     def register_connection(self, conn):
         self.selector.register(conn.mpd_sock, selectors.EVENT_READ, (conn, conn.mpd_sock))
@@ -47,7 +53,7 @@ class Connection:
     We have one of these per client. This contains the client socket and the client-specific mpd socket.
     TODO handle disconnections
     """
-    def __init__(self, proxy, client_sock, mpd_addr, mpd_port):
+    def __init__(self, proxy, client_sock, client_addr, mpd_addr, mpd_port):
         """
         :param proxy: Proxy object
         :param client_sock: Client that initiated the connection; can be None for monitoring socket
@@ -56,27 +62,31 @@ class Connection:
         """
         self.proxy = proxy
         self.client_sock = client_sock
+        self.client_addr = client_addr
         self.mpd_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.mpd_sock.connect((mpd_addr, mpd_port))
+
+        self.recv_buf = None
 
     def disconnect(self):
         """
         Disconnects the client and mpd and cleans up.
         :return:
         """
-        raise NotImplementedError()
+        logging.info("Disconnecting " + self.client_addr)
+        self.proxy.selector.unregister(self.client_sock)
+        self.proxy.selector.unregister(self.mpd_sock)
 
     def recv(self, sock):
         """
         :param sock: socket the message came from; must be self.mpd_sock or self.client_sock
         :return:
         """
+        print("receiving")
         source = Source.mpd
-        if sock is self.mpd_sock:
-            pass
-        elif sock is self.client_sock:
+        if sock is self.client_sock:
             source = Source.client
-        else:
+        elif sock is not self.mpd_sock:
             assert False
 
         bufsize = 1024  # make this less static
@@ -90,9 +100,44 @@ class Connection:
             self.disconnect()
             return
 
-        # todo continue
+        # todo split up received messages by \n and process already received lines
+        if chunk.endswith(b"\n") and self.recv_buf is not None:
+            chunk = self.recv_buf + chunk
+            self.recv_buf = None
+        else:
+            print("not getting enough, buffering")
+            if self.recv_buf is None:
+                self.recv_buf = chunk
+            else:
+                self.recv_buf += chunk
+            return
+
+        s = chunk.decode("utf-8")
+        if source == Source.mpd:
+            logging.debug("<-    mpd: " + s)
+        else:
+            logging.debug("<- client: " + s)
+
         msg = Message.deserialize(self, source, chunk)
         self.proxy.recv_message(msg)
+
+    def send(self, msg, target):
+        """
+        :param msg: Message object
+        :param target: util.Source object
+        :return:
+        """
+        sock = self.mpd_sock
+        t = "   mpd"
+        if target is Source.client:
+            sock = self.client_sock
+            t = "client"
+        elif target is not Source.mpd:
+            assert False
+
+        msg = msg.serialize()
+        sock.sendall(msg)
+        logging.debug("-> " + t + ": " + msg.decode("utf-8"))
 
 
     def send_mpd(self, msg):
@@ -100,14 +145,17 @@ class Connection:
         :param msg: Message object that is to be sent to MPD
         :return:
         """
-        raise NotImplementedError()
+        msg = msg.serialize().decode("utf-8")
+        self.mpd_sock.sendall(msg)
+        logging.debug("->    mpd: " + msg)
 
     def send_client(self, msg):
         """
         :param msg: Message object that is to be sent to the client
         :return:
         """
-        raise NotImplementedError()
+        msg = msg.serialize().decode("utf-8")
+        self.client_sock.sendall(msg.serialize())
 
 
 class Message:
@@ -118,6 +166,7 @@ class Message:
         """
         self.connection = connection
         self.source = source
+        self.message = None
         assert (connection is source is None) or (connection is not None and source is not None)
 
     @classmethod
@@ -129,7 +178,9 @@ class Message:
         :param bytestream: received bytes
         :return: Message object
         """
-        raise NotImplementedError()
+        msg = cls(connection, source)
+        msg.message = bytestream
+        return msg
 
     @classmethod
     def original_message(cls):
@@ -143,7 +194,7 @@ class Message:
         """
         :return: Serialized message that can be sent
         """
-        raise NotImplementedError()
+        return self.message
 
 
 def connhandler(proxy):
@@ -185,7 +236,7 @@ def listener(proxy):
         conn, addr = s.accept()
         conn.setblocking(False)
         print("incoming connection from " + str(addr[0]))
-        conn = Connection(conn, _host_address, _host_port)  # TODO decide how this is registered in main thingy
+        conn = Connection(proxy, conn, addr, _host_address, _host_port)  # TODO decide how this is registered in main thingy
         proxy.register_connection(conn)
 
 
@@ -196,6 +247,7 @@ def init():
     """
     proxy = Proxy()
     threading.Thread(target=listener, args=(proxy,), name='thread-listener').start()
+    threading.Thread(target=connhandler, args=(proxy,)).start()
     # Should we maybe start the proxy via a main non-daemon thread but run the vital functions via a daemon-thread? 
     # To spare resources and not have a python script running 24/7. Not sure that makes sense though, tired and my eyes hurt. Gn8
     # mpdprox_main = threading.Thread(target=listener, name='thread-listener')
