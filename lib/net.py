@@ -6,6 +6,7 @@ import socket
 import threading
 import logging
 import selectors
+import traceback
 from lib.util import Source
 
 # logging.basicConfig(filename='net.log', level=logging.DEBUG) # temporary DEBUG default
@@ -17,8 +18,9 @@ logging.critical('It was the Night King - and he had a dragon!')
 
 
 _host_address = "192.168.0.2"
+#_host_address = "localhost"
 _host_port = 6600
-_listening_port = 6601
+_listening_port = 6602
 
 
 class Proxy:
@@ -63,19 +65,22 @@ class Connection:
         self.proxy = proxy
         self.client_sock = client_sock
         self.client_addr = client_addr
+        self.client_recv_buf = []
         self.mpd_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.mpd_sock.connect((mpd_addr, mpd_port))
-
-        self.recv_buf = None
+        self.mpd_recv_buf = []
 
     def disconnect(self):
         """
         Disconnects the client and mpd and cleans up.
         :return:
         """
-        logging.info("Disconnecting " + self.client_addr)
+        logging.info("Disconnecting " + self.client_addr[0])
+        traceback.print_stack()
         self.proxy.selector.unregister(self.client_sock)
         self.proxy.selector.unregister(self.mpd_sock)
+        self.client_sock.close()
+        self.mpd_sock.close()
 
     def recv(self, sock):
         """
@@ -83,9 +88,11 @@ class Connection:
         :return:
         """
         print("receiving")
+        recv_buf = self.mpd_recv_buf
         source = Source.mpd
         if sock is self.client_sock:
             source = Source.client
+            recv_buf = self.client_recv_buf
         elif sock is not self.mpd_sock:
             assert False
 
@@ -96,30 +103,63 @@ class Connection:
             self.disconnect()
             return
 
+        print(chunk)
+
         if len(chunk) == 0:
+            if source == Source.mpd:
+                logging.info("MPD disconnected.")
+            else:
+                logging.info("Client disconnected.")
             self.disconnect()
             return
 
-        # todo split up received messages by \n and process already received lines
-        if chunk.endswith(b"\n") and self.recv_buf is not None:
-            chunk = self.recv_buf + chunk
-            self.recv_buf = None
-        else:
-            print("not getting enough, buffering")
-            if self.recv_buf is None:
-                self.recv_buf = chunk
+        # Split up received messages by \n and process already received lines
+        split = chunk.split(b"\n")
+        messages = []
+        for i in range(len(split)):
+
+            # Last message; message was incomplete
+            if i == len(split) - 1 and split[i] != "":
+                print(b"01: " + split[i])
+                recv_buf.append(split[i])
+
+            # Previous message was incomplete; this message completes it
+            elif i == 0 and len(recv_buf) != 0:
+                print(b"02: " + split[i])
+                assert len(split) > 1
+                msg = b""
+                for el in recv_buf:
+                    msg += el
+                msg += split[i]
+                messages.append(msg)
+
+                if source is Source.mpd:
+                    self.mpd_recv_buf = []
+                else:
+                    self.client_recv_buf = []
+
+            # Empty message or last message was complete
+            elif split[i] == "":
+                print(b"03: " + split[i])
+                pass
+
+            # Complete message
             else:
-                self.recv_buf += chunk
-            return
+                print(b"04: " + split[i])
+                messages.append(split[i])
 
-        s = chunk.decode("utf-8")
-        if source == Source.mpd:
-            logging.debug("<-    mpd: " + s)
-        else:
-            logging.debug("<- client: " + s)
+        print("messages:")
+        print(messages)
+        for msg in messages:
+            print(b"decoding " + msg)
+            msg = msg.decode("utf-8")
+            if source == Source.mpd:
+                logging.debug("<-    mpd: " + msg)
+            else:
+                logging.debug("<- client: " + msg)
 
-        msg = Message.deserialize(self, source, chunk)
-        self.proxy.recv_message(msg)
+            msg = Message.deserialize(self, source, msg)
+            self.proxy.recv_message(msg)
 
     def send(self, msg, target):
         """
@@ -136,8 +176,8 @@ class Connection:
             assert False
 
         msg = msg.serialize()
-        sock.sendall(msg)
-        logging.debug("-> " + t + ": " + msg.decode("utf-8"))
+        sock.sendall(msg.encode("utf-8"))
+        logging.debug("-> " + t + ": " + msg)
 
 
     def send_mpd(self, msg):
@@ -194,7 +234,7 @@ class Message:
         """
         :return: Serialized message that can be sent
         """
-        return self.message
+        return self.message + "\n"
 
 
 def connhandler(proxy):
@@ -234,7 +274,6 @@ def listener(proxy):
     s.listen(5)
     while True:
         conn, addr = s.accept()
-        conn.setblocking(False)
         print("incoming connection from " + str(addr[0]))
         conn = Connection(proxy, conn, addr, _host_address, _host_port)  # TODO decide how this is registered in main thingy
         proxy.register_connection(conn)
