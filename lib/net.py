@@ -6,11 +6,11 @@ import socket
 import threading
 import logging
 
-logging.basicConfig(filename='net.log',level=logging.DEBUG) # temporary DEBUG default
+logging.basicConfig(filename='net.log', level=logging.DEBUG)  # temporary DEBUG default
 logging.info('Tut.')
 logging.warning('Winter is coming!')
 logging.error('Oh boy!')
-logging.critical('It is the Night King - and he has a dragon!')
+logging.critical('It was the Night King - and he had a dragon!')
 
 
 _host_address = "localhost"
@@ -20,7 +20,7 @@ _listening_port = 6601
 
 class Client:
     """
-    We have one of these per client. This contains the client socket and the client-specific mpd socket.
+    We have one of these per client. This handles the connection between one client and the MPD server.
     """
     def __init__(self, client_sock, mpd_addr, mpd_port):
         """
@@ -57,7 +57,7 @@ def listener():
         s.bind(("", _listening_port))
     except OSError:
         # binding failed
-        print("Listener not running: Binding to port " + str(_listening_port) + " failed")
+        logging.error("Listener not running: Binding to port " + str(_listening_port) + " failed")
         return
 
     s.listen(5)
@@ -65,7 +65,7 @@ def listener():
 
         conn, addr = s.accept()
         conn.setblocking(False)
-        print("incoming connection from " + str(addr[0]))
+        logging.debug("incoming connection from " + str(addr[0]))
         Client(conn, _host_address, _host_port)  # TODO decide how this is registered in main thingy
 
 
