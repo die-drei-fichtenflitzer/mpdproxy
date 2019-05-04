@@ -20,7 +20,7 @@ logging.critical('It was the Night King - and he had a dragon!')
 _host_address = "192.168.0.2"
 #_host_address = "localhost"
 _host_port = 6600
-_listening_port = 6602
+_listening_port = 6601
 
 
 class Proxy:
@@ -28,6 +28,19 @@ class Proxy:
         self.connections = []
         self.selector = selectors.DefaultSelector()
         # todo launch mpd monitoring connection
+
+    def recv_messages(self, msg_list):
+        """
+        Receives multiple messages in a bunch.
+        :param msg_list:
+        :return:
+        """
+        conn = msg_list[0].connection
+        source = msg_list[0].source
+        if source == Source.mpd:
+            conn.send_bunch(msg_list, Source.client)
+        elif source == Source.client:
+            conn.send_bunch(msg_list, Source.mpd)
 
     def recv_message(self, msg):
         """
@@ -65,10 +78,11 @@ class Connection:
         self.proxy = proxy
         self.client_sock = client_sock
         self.client_addr = client_addr
-        self.client_recv_buf = []
+        self.client_msg_buf = []
         self.mpd_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.mpd_sock.connect((mpd_addr, mpd_port))
-        self.mpd_recv_buf = []
+        self.mpd_sock.setblocking(False)
+        self.mpd_msg_buf = []
 
     def disconnect(self):
         """
@@ -88,30 +102,47 @@ class Connection:
         :return:
         """
         print("receiving")
-        recv_buf = self.mpd_recv_buf
+
+        # Stores the received message until it is concluded with \n
+        msg_buf = self.mpd_msg_buf
         source = Source.mpd
         if sock is self.client_sock:
             source = Source.client
-            recv_buf = self.client_recv_buf
+            msg_buf = self.client_msg_buf
         elif sock is not self.mpd_sock:
             assert False
 
-        bufsize = 1024  # make this less static
-        try:
-            chunk = sock.recv(bufsize)
-        except (ConnectionResetError, OSError):
-            self.disconnect()
-            return
+        # Stores the received bytes until recv() fails
+        recv_buf = []
 
+        bufsize = 1024
+        while True:
+            try:
+                chunk = sock.recv(bufsize)
+            except BlockingIOError:
+                #print("received:")
+                #print(recv_buf)
+                break
+            except (ConnectionResetError, OSError) as e:
+                print(e)
+                self.disconnect()
+                return
+
+            print(chunk)
+
+            if len(chunk) == 0:
+                if source == Source.mpd:
+                    logging.info("MPD disconnected.")
+                else:
+                    logging.info("Client disconnected.")
+                self.disconnect()
+                return
+
+            recv_buf.append(chunk)
+
+        chunk = b"".join(recv_buf)
+        print("chunk:")
         print(chunk)
-
-        if len(chunk) == 0:
-            if source == Source.mpd:
-                logging.info("MPD disconnected.")
-            else:
-                logging.info("Client disconnected.")
-            self.disconnect()
-            return
 
         # Split up received messages by \n and process already received lines
         split = chunk.split(b"\n")
@@ -119,27 +150,27 @@ class Connection:
         for i in range(len(split)):
 
             # Last message; message was incomplete
-            if i == len(split) - 1 and split[i] != "":
+            if i == len(split) - 1 and split[i] != b"":
                 print(b"01: " + split[i])
-                recv_buf.append(split[i])
+                msg_buf.append(split[i])
 
             # Previous message was incomplete; this message completes it
-            elif i == 0 and len(recv_buf) != 0:
+            elif i == 0 and len(msg_buf) != 0:
                 print(b"02: " + split[i])
                 assert len(split) > 1
                 msg = b""
-                for el in recv_buf:
+                for el in msg_buf:
                     msg += el
                 msg += split[i]
                 messages.append(msg)
 
                 if source is Source.mpd:
-                    self.mpd_recv_buf = []
+                    self.mpd_msg_buf = []
                 else:
-                    self.client_recv_buf = []
+                    self.client_msg_buf = []
 
             # Empty message or last message was complete
-            elif split[i] == "":
+            elif split[i] == b"":
                 print(b"03: " + split[i])
                 pass
 
@@ -150,6 +181,7 @@ class Connection:
 
         print("messages:")
         print(messages)
+        msg_deserialized = []
         for msg in messages:
             print(b"decoding " + msg)
             msg = msg.decode("utf-8")
@@ -159,7 +191,8 @@ class Connection:
                 logging.debug("<- client: " + msg)
 
             msg = Message.deserialize(self, source, msg)
-            self.proxy.recv_message(msg)
+            msg_deserialized.append(msg)
+        self.proxy.recv_messages(msg_deserialized)
 
     def send(self, msg, target):
         """
@@ -176,6 +209,27 @@ class Connection:
             assert False
 
         msg = msg.serialize()
+        sock.sendall(msg.encode("utf-8"))
+        logging.debug("-> " + t + ": " + msg)
+
+    def send_bunch(self, msg_list, target):
+        """
+        Sends a list of messages in one message.
+        :param msg_list: List of message objects
+        :param target: util.Source object
+        :return:
+        """
+        sock = self.mpd_sock
+        t = "   mpd"
+        if target is Source.client:
+            sock = self.client_sock
+            t = "client"
+        elif target is not Source.mpd:
+            assert False
+
+        for i in range(len(msg_list)):
+            msg_list[i] = msg_list[i].serialize()
+        msg = "".join(msg_list)
         sock.sendall(msg.encode("utf-8"))
         logging.debug("-> " + t + ": " + msg)
 
@@ -275,6 +329,7 @@ def listener(proxy):
     while True:
         conn, addr = s.accept()
         print("incoming connection from " + str(addr[0]))
+        conn.setblocking(False)
         conn = Connection(proxy, conn, addr, _host_address, _host_port)  # TODO decide how this is registered in main thingy
         proxy.register_connection(conn)
 
