@@ -35,6 +35,8 @@ class Proxy:
         :param msg_list:
         :return:
         """
+        if not msg_list:
+            return
         conn = msg_list[0].connection
         source = msg_list[0].source
         if source == Source.mpd:
@@ -90,7 +92,6 @@ class Connection:
         :return:
         """
         logging.info("Disconnecting " + self.client_addr[0])
-        traceback.print_stack()
         self.proxy.selector.unregister(self.client_sock)
         self.proxy.selector.unregister(self.mpd_sock)
         self.client_sock.close()
@@ -101,7 +102,6 @@ class Connection:
         :param sock: socket the message came from; must be self.mpd_sock or self.client_sock
         :return:
         """
-        print("receiving")
 
         # Stores the received message until it is concluded with \n
         msg_buf = self.mpd_msg_buf
@@ -120,15 +120,10 @@ class Connection:
             try:
                 chunk = sock.recv(bufsize)
             except BlockingIOError:
-                #print("received:")
-                #print(recv_buf)
                 break
-            except (ConnectionResetError, OSError) as e:
-                print(e)
+            except (ConnectionResetError, OSError):
                 self.disconnect()
                 return
-
-            print(chunk)
 
             if len(chunk) == 0:
                 if source == Source.mpd:
@@ -141,8 +136,6 @@ class Connection:
             recv_buf.append(chunk)
 
         chunk = b"".join(recv_buf)
-        print("chunk:")
-        print(chunk)
 
         # Split up received messages by \n and process already received lines
         split = chunk.split(b"\n")
@@ -151,12 +144,10 @@ class Connection:
 
             # Last message; message was incomplete
             if i == len(split) - 1 and split[i] != b"":
-                print(b"01: " + split[i])
                 msg_buf.append(split[i])
 
             # Previous message was incomplete; this message completes it
             elif i == 0 and len(msg_buf) != 0:
-                print(b"02: " + split[i])
                 assert len(split) > 1
                 msg = b""
                 for el in msg_buf:
@@ -171,19 +162,14 @@ class Connection:
 
             # Empty message or last message was complete
             elif split[i] == b"":
-                print(b"03: " + split[i])
                 pass
 
             # Complete message
             else:
-                print(b"04: " + split[i])
                 messages.append(split[i])
 
-        print("messages:")
-        print(messages)
         msg_deserialized = []
         for msg in messages:
-            print(b"decoding " + msg)
             msg = msg.decode("utf-8")
             if source == Source.mpd:
                 logging.debug("<-    mpd: " + msg)
@@ -232,7 +218,6 @@ class Connection:
         msg = "".join(msg_list)
         sock.sendall(msg.encode("utf-8"))
         logging.debug("-> " + t + ": " + msg)
-
 
     def send_mpd(self, msg):
         """
@@ -328,7 +313,7 @@ def listener(proxy):
     s.listen(5)
     while True:
         conn, addr = s.accept()
-        print("incoming connection from " + str(addr[0]))
+        logging.info("incoming connection from " + str(addr[0]))
         conn.setblocking(False)
         conn = Connection(proxy, conn, addr, _host_address, _host_port)  # TODO decide how this is registered in main thingy
         proxy.register_connection(conn)
