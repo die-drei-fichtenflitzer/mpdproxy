@@ -1,8 +1,14 @@
+from abc import ABC
+
 from lib.statemachine import StateMachine
 from lib.util import Source
 from enum import Enum
 
+
 class Event:
+    """
+    Occurs when a client issues a control command (e.g. playback control).
+    """
     def __init__(self, source):
         """
         :param source: lib.util.Source object that indicates who made the event happen
@@ -10,8 +16,11 @@ class Event:
         self.source = source
         self._has_run = False
 
-    def close(self):
-        pass
+    def cancel(self):
+        """
+        Cancels the event; control command does not reach mpd.
+        """
+        raise NotImplementedError
 
     def run(self):
         if self._has_run:
@@ -20,22 +29,35 @@ class Event:
         self._has_run = True
         # TODO
 
+
 class Events(Enum):
-    PLAYBACK = 0
-    QUEUE = 1
+    PLAYBACK = 0  # start, stop, pause, seek
+    OPTIONS = 1  # random, repeat etc
+    QUEUE = 2  # add, remove
+    VOLUME = 3  # volume change
+    DATABASE = 4  # update started or db changed after update
+    OUTPUT = 5  # audio output change
 
-class Listener:
-    def __init__(self, event, callback, mode):
+
+class ControlListener(ABC):
+    """
+    Listens to control events, i.e. control commands issued by clients.
+    """
+    def __init__(self, event, prio):
         self.event = event
-        self.callback = callback
-        self.mode = mode
+        self.mode = prio
 
-    def fire(self, event):
-        self.callback(event)
+    def listen(self, event):
+        raise NotImplementedError
 
-class ListenerModes(Enum):
-    NOTIFY = 0
-    BLOCK = 1
+
+class EventPriority(Enum):
+    HIGHEST = 0
+    HIGH = 1
+    NORMAL = 2
+    LOW = 3
+    INFO = 4
+
 
 class PlaybackStates(Enum):
     PLAY = 0
@@ -43,15 +65,14 @@ class PlaybackStates(Enum):
     STOP = 2
     UNDEFINED = 3
 
+
 class MPD:
     def __init__(self):
         self.listeners = []
         self.playback_state = PlaybackStates.UNDEFINED
 
-    def register_listener(self, event, callback, mode):
-        listener =  Listener(event, callback, mode)
+    def register_listener(self, listener, event, prio):
         self.listeners.append(listener)
-        return listener
 
     def unregister_listener(self, listener):
         pass

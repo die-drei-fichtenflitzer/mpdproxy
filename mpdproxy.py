@@ -6,6 +6,7 @@ from lib.mpd import MPD
 from lib.util import Source
 import pkgutil
 
+
 def load_plugins(mpd):
     plugins_dir = "plugins"
 
@@ -16,7 +17,7 @@ def load_plugins(mpd):
         try:
             p = pkgutil.importlib.import_module("{}.{}".format(plugins_dir, plugin))
         except:
-            print("Unable to load plugin: {} (Import failed)".format(plugin)) #TODO log
+            print("Unable to load plugin: {} (Import failed)".format(plugin))  # TODO log
             continue
         else:
             plugins.append(p)
@@ -29,7 +30,7 @@ def load_plugins(mpd):
             plugin = module.Plugin(mpd)
         except AttributeError:
             failed.append(module)
-            print("Unable to load plugin: {} (No Plugin class)".format(module)) #TODO log
+            print("Unable to load plugin: {} (No Plugin class)".format(module))  # TODO log
         except TypeError:
             failed.append(module)
             print("Unable to load plugin: {} (Plugin class: too few or too many parameters)".format(module))
